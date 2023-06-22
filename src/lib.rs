@@ -138,7 +138,7 @@ pub struct AXI4LiteSlaveController<const DW: usize> {
 
     // local signals
     aclk: Signal<Local, Clock>,
-    raddr: Signal<Local, Bits<32>>,
+    reg_rden: Signal<Local, Bit>,
 
     // registers
     awready: DFF<Bit>,
@@ -155,6 +155,12 @@ pub struct AXI4LiteSlaveController<const DW: usize> {
     rvalid: DFF<Bit>,
     rdata: DFF<Bits<DW>>,
 
+    // internal address registers
+    axi_raddr: DFF<Bits<32>>,
+    axi_waddr: DFF<Bits<32>>,
+    axi_rid: DFF<Bits<4>>,
+    axi_wid: DFF<Bits<4>>,
+
     // for testing, 4 registers
     pub reg0: DFF<Bits<DW>>,
     pub reg1: DFF<Bits<DW>>,
@@ -169,7 +175,7 @@ impl<const DW: usize> Logic for AXI4LiteSlaveController<DW> {
 
         dff_setup!(
             self, aclk, awready, wready, bid, bresp, bvalid, arready, rvalid, rdata, rid, rresp,
-            rlast, reg0, reg1, reg2, reg3
+            rlast, reg0, reg1, reg2, reg3, axi_raddr, axi_waddr, axi_rid, axi_wid,
         );
 
         // assign all the output registers
@@ -188,19 +194,54 @@ impl<const DW: usize> Logic for AXI4LiteSlaveController<DW> {
 
         // handle a read request
 
+        if !self.arready.q.val() && self.axi_bus.ARVALID.val() {
+            self.arready.d.next = true;
+            self.axi_rid.d.next = self.axi_bus.ARID.val(); // sample the read ID
+            self.axi_raddr.d.next = self.axi_bus.ARADDR.val(); // sample the read address
+        } else {
+            self.arready.d.next = false;
+        }
+
+        if (self.arready.q.val() && self.axi_bus.ARVALID.val() && !self.rvalid.q.val()) {
+            self.rvalid.d.next = true;
+            self.rid.d.next = self.axi_rid.q.val();
+            self.rresp.d.next = 0b00.into(); // OKAY
+        } else if (self.rvalid.q.val() && self.axi_bus.RREADY.val()) {
+            self.rvalid.d.next = false;
+        }
+
+        self.reg_rden.next =
+            self.arready.q.val() && self.axi_bus.ARVALID.val() && !self.rvalid.q.val();
+
         // when ARVALID is high and ARREADY is high, we have a valid read request
         if self.axi_bus.ARVALID.val() && self.arready.q.val() {
             // we're going to ignore the address and just return the value of the register
             // we're going to assume that the address is aligned to the data width
-            self.raddr = self.axi_bus.ARADDR.val();
-            self.rdata.d.next = match self.raddr {
+
+            /*
+            self.rdata.d.next = match self.axi_bus.ARADDR.val() {
                 0 => self.reg0.q.val(),
                 4 => self.reg1.q.val(),
                 8 => self.reg2.q.val(),
                 12 => self.reg3.q.val(),
                 _ => 0.into(),
             };
-            self.rid.d.next = self.axi_bus.ARID.val();
+            */
+
+            // manually match the address
+            if self.axi_bus.ARADDR.val() == 0 {
+                self.rdata.d.next = self.reg0.q.val();
+            } else if self.axi_bus.ARADDR.val() == 4 {
+                self.rdata.d.next = self.reg1.q.val();
+            } else if self.axi_bus.ARADDR.val() == 8 {
+                self.rdata.d.next = self.reg2.q.val();
+            } else if self.axi_bus.ARADDR.val() == 12 {
+                self.rdata.d.next = self.reg3.q.val();
+            } else {
+                self.rdata.d.next = 0.into();
+            }
+
+            self.rid.d.next = self.axi_bus.ARID.val(); // ID reflection
             self.rresp.d.next = 0b00.into(); // OKAY
             self.rlast.d.next = true;
             self.rvalid.d.next = true;
