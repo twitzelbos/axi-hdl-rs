@@ -83,7 +83,14 @@ fn test_axi4lite_slave_controller_read() {
             x.axi_bus.ARADDR.next = 0x0000_0004.into();
             x.axi_bus.ARVALID.next = true;
             wait_clock_cycle!(ep, axi_bus.ACLK, x);
-            sim_assert_eq!(ep, x.axi_bus.ARADDR.val(), 0x0000_0004, x);
+            sim_assert_eq!(ep, x.axi_bus.RDATA.val(), 0x1234_5678, x);
+            sim_assert!(ep, x.axi_bus.RVALID.val(), x);
+            x.axi_bus.ARVALID.next = false;
+            x.axi_bus.RREADY.next = true;
+            wait_clock_cycle!(ep, axi_bus.ACLK, x);
+            x.axi_bus.RREADY.next = false;
+            wait_clock_cycle!(ep, axi_bus.ACLK, x);
+            sim_assert!(ep, !x.axi_bus.RVALID.val(), x);
             wait_clock_cycles!(ep, axi_bus.ACLK, x, 20);
 
             ep.done(x)
