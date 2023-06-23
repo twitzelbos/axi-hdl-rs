@@ -203,34 +203,18 @@ impl<const DW: usize> Logic for AXI4LiteSlaveController<DW> {
             self.arready.d.next = false;
         }
 
-        if self.arready.q.val() && self.axi_bus.ARVALID.val() && !self.rvalid.q.val() {
+        self.reg_rden.next =
+            self.arready.q.val() && self.axi_bus.ARVALID.val() && !self.rvalid.q.val();
+
+        if self.reg_rden.val() {
             self.rvalid.d.next = true;
-            self.rid.d.next = self.axi_rid.q.val();
+            self.rid.d.next = self.axi_rid.q.val(); // reflect the read ID
             self.rresp.d.next = 0b00.into(); // OKAY
         } else if self.rvalid.q.val() && self.axi_bus.RREADY.val() {
             self.rvalid.d.next = false;
         }
 
-        self.reg_rden.next =
-            self.arready.q.val() && self.axi_bus.ARVALID.val() && !self.rvalid.q.val();
-
-        if self.reg_rden.val() {
-            self.rdata.d.next = self.read_data.val();
-        }
-        // we're going to ignore the address and just return the value of the register
-        // we're going to assume that the address is aligned to the data width
-
-        /* // match expressions aren't allowed yet
-        self.rdata.d.next = match self.axi_bus.ARADDR.val() {
-            0 => self.reg0.q.val(),
-            4 => self.reg1.q.val(),
-            8 => self.reg2.q.val(),
-            12 => self.reg3.q.val(),
-            _ => 0.into(),
-        };
-        */
-
-        // manually match the address
+        // manually decode the address
         if self.axi_raddr.q.val() == 0 {
             self.read_data.next = self.reg0.q.val();
         } else if self.axi_raddr.q.val() == 4 {
@@ -242,6 +226,15 @@ impl<const DW: usize> Logic for AXI4LiteSlaveController<DW> {
         } else {
             self.read_data.next = 0.into();
         }
+
+        // when the read is enabled, assign the read data
+        if self.reg_rden.val() {
+            self.rdata.d.next = self.read_data.val();
+        }
+
+        // By default (not in reset)
+        self.awready.d.next = true;
+        self.arready.d.next = true;
 
         // the reset logic: per spec this is asynchronous, but we're going to make it synchronous for now
         // when ARESETn is low:
