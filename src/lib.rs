@@ -132,8 +132,8 @@ pub struct AXI4Slave<const DW: usize> {
 }
 
 // AXI4Lite slaves only support 32-bit and 64-bit data widths, but won't be enforcing that here.
-#[derive(LogicBlock, Default)]
-pub struct AXI4LiteSlaveController<const DW: usize> {
+#[derive(LogicBlock)]
+pub struct AXI4LiteSlaveController<const DW: usize, const N: usize> {
     pub axi_bus: AXI4Slave<DW>,
 
     // local signals
@@ -142,13 +142,13 @@ pub struct AXI4LiteSlaveController<const DW: usize> {
     read_data: Signal<Local, Bits<DW>>,
 
     // registers
-    awready: DFF<Bit>,
+    awready: DFFWithInit<Bit>,
     wready: DFF<Bit>,
     bid: DFF<Bits<4>>,
     bresp: DFF<Bits<2>>,
     bvalid: DFF<Bit>,
 
-    arready: DFF<Bit>,
+    arready: DFFWithInit<Bit>,
 
     rid: DFF<Bits<4>>,
     rresp: DFF<Bits<2>>,
@@ -164,12 +164,45 @@ pub struct AXI4LiteSlaveController<const DW: usize> {
 
     // for testing, 4 registers
     pub reg0: DFF<Bits<DW>>,
-    pub reg1: DFF<Bits<DW>>,
+    pub reg1: DFFWithInit<Bits<DW>>,
     pub reg2: DFF<Bits<DW>>,
     pub reg3: DFF<Bits<DW>>,
+
+    pub registers: [DFF<Bits<DW>>; N],
 }
 
-impl<const DW: usize> Logic for AXI4LiteSlaveController<DW> {
+impl<const DW: usize, const N: usize> Default for AXI4LiteSlaveController<DW, N> {
+    fn default() -> Self {
+        Self {
+            arready: DFFWithInit::new(true),
+            awready: DFFWithInit::new(true),
+            wready: Default::default(),
+            bid: Default::default(),
+            bresp: Default::default(),
+            bvalid: Default::default(),
+            rid: Default::default(),
+            rresp: Default::default(),
+            rlast: Default::default(),
+            rvalid: Default::default(),
+            rdata: Default::default(),
+            axi_raddr: Default::default(),
+            axi_waddr: Default::default(),
+            axi_rid: Default::default(),
+            axi_wid: Default::default(),
+            reg0: Default::default(),
+            reg1: DFFWithInit::new(0x1234_5678.into()),
+            reg2: Default::default(),
+            reg3: Default::default(),
+            aclk: Default::default(),
+            reg_rden: Default::default(),
+            read_data: Default::default(),
+            axi_bus: Default::default(),
+            registers: array_init::array_init(|_| Default::default()),
+        }
+    }
+}
+
+impl<const DW: usize, const N: usize> Logic for AXI4LiteSlaveController<DW, N> {
     #[hdl_gen]
     fn update(&mut self) {
         self.aclk.next = self.axi_bus.ACLK.val();
@@ -178,6 +211,11 @@ impl<const DW: usize> Logic for AXI4LiteSlaveController<DW> {
             self, aclk, awready, wready, bid, bresp, bvalid, arready, rvalid, rdata, rid, rresp,
             rlast, reg0, reg1, reg2, reg3, axi_raddr, axi_waddr, axi_rid, axi_wid
         );
+
+        for i in 0..N {
+            self.registers[i].clock.next = self.aclk.val();
+            self.registers[i].d.next = self.registers[i].q.val();
+        }
 
         // assign all the output registers
         self.axi_bus.AWREADY.next = self.awready.q.val();
@@ -194,42 +232,38 @@ impl<const DW: usize> Logic for AXI4LiteSlaveController<DW> {
         self.axi_bus.RLAST.next = self.rlast.q.val();
 
         // handle a read request
-
-        if !self.arready.q.val() && self.axi_bus.ARVALID.val() {
-            self.arready.d.next = true;
+        // Unlike the Xilinx examples, we should have no reason to ever not be able to accept a read address
+        if self.axi_bus.ARVALID.val() {
+            //self.arready.d.next = true;
             self.axi_rid.d.next = self.axi_bus.ARID.val(); // sample the read ID
             self.axi_raddr.d.next = self.axi_bus.ARADDR.val(); // sample the read address
         } else {
-            self.arready.d.next = false;
+            //self.arready.d.next = false;
+        }
+
+        // manually decode the address
+        if self.axi_bus.ARADDR.val() == 0 {
+            self.read_data.next = self.reg0.q.val();
+        } else if self.axi_bus.ARADDR.val() == 4 {
+            self.read_data.next = self.reg1.q.val();
+        } else if self.axi_bus.ARADDR.val() == 8 {
+            self.read_data.next = self.reg2.q.val();
+        } else if self.axi_bus.ARADDR.val() == 12 {
+            self.read_data.next = self.reg3.q.val();
+        } else {
+            self.read_data.next = 0.into();
         }
 
         self.reg_rden.next =
             self.arready.q.val() && self.axi_bus.ARVALID.val() && !self.rvalid.q.val();
 
         if self.reg_rden.val() {
-            self.rvalid.d.next = true;
             self.rid.d.next = self.axi_rid.q.val(); // reflect the read ID
             self.rresp.d.next = 0b00.into(); // OKAY
+            self.rdata.d.next = self.read_data.val();
+            self.rvalid.d.next = true;
         } else if self.rvalid.q.val() && self.axi_bus.RREADY.val() {
             self.rvalid.d.next = false;
-        }
-
-        // manually decode the address
-        if self.axi_raddr.q.val() == 0 {
-            self.read_data.next = self.reg0.q.val();
-        } else if self.axi_raddr.q.val() == 4 {
-            self.read_data.next = self.reg1.q.val();
-        } else if self.axi_raddr.q.val() == 8 {
-            self.read_data.next = self.reg2.q.val();
-        } else if self.axi_raddr.q.val() == 12 {
-            self.read_data.next = self.reg3.q.val();
-        } else {
-            self.read_data.next = 0.into();
-        }
-
-        // when the read is enabled, assign the read data
-        if self.reg_rden.val() {
-            self.rdata.d.next = self.read_data.val();
         }
 
         // By default (not in reset)
