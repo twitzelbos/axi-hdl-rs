@@ -132,6 +132,8 @@ pub struct AXI4Slave<const DW: usize> {
 }
 
 // AXI4Lite slaves only support 32-bit and 64-bit data widths, but won't be enforcing that here.
+// This is an implementation that is always asserting ARREADY, so unlike the Xilinx
+// example cores you can read from it in one clock cycle
 #[derive(LogicBlock)]
 pub struct AXI4LiteSlaveController<const DW: usize, const N: usize> {
     pub axi_bus: AXI4Slave<DW>,

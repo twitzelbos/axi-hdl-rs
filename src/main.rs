@@ -92,7 +92,7 @@ fn test_axi4lite_slave_controller_read() {
             x.axi_bus.RREADY.next = false;
             wait_clock_cycle!(ep, axi_bus.ACLK, x);
             sim_assert!(ep, !x.axi_bus.RVALID.val(), x);
-            wait_clock_cycles!(ep, axi_bus.ACLK, x, 20);
+            wait_clock_cycles!(ep, axi_bus.ACLK, x, 4);
 
             ep.done(x)
         }
@@ -108,6 +108,63 @@ fn test_axi4lite_slave_controller_read() {
     vcd_to_svg(
         &vcd_path!("axi4lite_slave_controller_read.vcd"),
         "axi4lite_slave_controller_read.svg",
+        &[
+            "uut.axi_bus.ACLK",
+            "uut.axi_bus.ARESETn",
+            "uut.axi_bus.ARADDR",
+            "uut.axi_bus.AWREADY",
+            "uut.axi_bus.ARREADY",
+            "uut.axi_bus.ARVALID",
+            "uut.axi_bus.RREADY",
+            "uut.axi_bus.RDATA",
+        ],
+        0,
+        100 * sim_time::ONE_NANOSECOND,
+    )
+    .unwrap()
+}
+
+// Have a master that has RREADY always asserted
+#[test]
+fn test_axi4lite_slave_controller_read_always_rready() {
+    let mut sim = simple_sim!(
+        AXI4LiteSlaveController::<32, 4>,
+        axi_bus.ACLK,
+        100_000_000,
+        ep,
+        {
+            let mut x = ep.init()?; // Get the circuit
+
+            // start not in reset
+            x.axi_bus.ARESETn.next = true;
+            x.axi_bus.RREADY.next = true;
+            //
+            wait_clock_cycle!(ep, axi_bus.ACLK, x);
+            x.axi_bus.ARADDR.next = 0x0000_0004.into();
+            x.axi_bus.ARVALID.next = true;
+            wait_clock_cycle!(ep, axi_bus.ACLK, x);
+            sim_assert_eq!(ep, x.axi_bus.RDATA.val(), 0x1234_5678, x);
+            sim_assert!(ep, x.axi_bus.RVALID.val(), x);
+            x.axi_bus.ARVALID.next = false;
+            x.axi_bus.ARADDR.next = 0x0000_0000.into();
+            wait_clock_cycle!(ep, axi_bus.ACLK, x);
+            sim_assert!(ep, !x.axi_bus.RVALID.val(), x);
+            wait_clock_cycles!(ep, axi_bus.ACLK, x, 4);
+
+            ep.done(x)
+        }
+    );
+
+    // Run the simulation
+    sim.run_to_file(
+        AXI4LiteSlaveController::<32, 4>::default().into(),
+        sim_time::ONE_MICROSECOND,
+        &vcd_path!("axi4lite_slave_controller_read_always_rready.vcd"),
+    )
+    .unwrap();
+    vcd_to_svg(
+        &vcd_path!("axi4lite_slave_controller_read_always_rready.vcd"),
+        "axi4lite_slave_controller_read_always_rready.svg",
         &[
             "uut.axi_bus.ACLK",
             "uut.axi_bus.ARESETn",
